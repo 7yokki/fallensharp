@@ -2,6 +2,7 @@
 
 mod ast;
 mod codegen;
+mod fpp;
 mod lexer;
 mod parser;
 mod preprocess;
@@ -16,13 +17,13 @@ use std::time::Instant;
 
 fn usage() {
     eprintln!(
-        "Fallen derleyici v0.3\n\
+        "Fallen++ derleyici v0.1\n\
          Kullanım:\n\
-         \x20 fallen build  <dosya.flen> [-o çıktı] [-S] [--stats] [--keep-asm]\n\
-         \x20 fallen run    <dosya.flen> [--stats]\n\
-         \x20 fallen check  <dosya.flen>              (kod üretmeden semantik kontrol)\n\
-         \x20 fallen version\n\n\
-         C sözdizimi + Rust seviyesi bellek koruması + OOP + switch/case + doğrudan makine kodu."
+         \x20 fallenpp build <dosya.fpp> [-o çıktı] [-S] [--stats] [--keep-asm]\n\
+         \x20 fallenpp run   <dosya.fpp> [--stats]\n\
+         \x20 fallenpp check <dosya.fpp>              (kod üretmeden semantik kontrol)\n\
+         \x20 fallenpp version\n\n\
+         Basit sözdizimi + bellek güvenliği + doğrudan makine kodu."
     );
 }
 
@@ -43,11 +44,11 @@ fn parse_args() -> Result<Options, String> {
         std::process::exit(0);
     }
     if command == "--version" || command == "version" {
-        println!("fallen 0.3.0");
+        println!("fallenpp 0.1.0");
         std::process::exit(0);
     }
     if command != "build" && command != "run" && command != "compile" && command != "check" {
-        if command.ends_with(".flen") {
+        if command.ends_with(".fpp") {
             let mut rest = vec![command.clone()];
             rest.extend(args);
             let mut it = rest.into_iter();
@@ -168,7 +169,7 @@ fn link_direct(obj: &Path, out: &Path) -> Result<bool, String> {
 
 fn main() {
     if let Err(e) = real_main() {
-        eprintln!("Fallen: {}", e);
+        eprintln!("Fallen++: {}", e);
         std::process::exit(1);
     }
 }
@@ -179,12 +180,8 @@ fn real_main() -> Result<(), String> {
         .map_err(|e| format!("{} okunamadı: {}", opts.input.display(), e))?;
 
     let t0 = Instant::now();
-    let toks = preprocess::preprocess(&src).map_err(|e| format!("önişlemci hatası: {}", e))?;
+    let mut program = fpp::parse(&src).map_err(|e| format!("ayrıştırma hatası: {}", e))?;
     let t_lex = t0.elapsed();
-
-    let mut program = parser::Parser::new(toks)
-        .parse_program()
-        .map_err(|e| format!("ayrıştırma hatası: {}", e))?;
     let t_parse = t0.elapsed();
 
     let mut sema = sema::Sema::new();
@@ -195,7 +192,7 @@ fn real_main() -> Result<(), String> {
     // "check" komutu: sadece semantik analiz, kod üretme yok
     if opts.command == "check" {
         eprintln!(
-            "Fallen: {} — semantik kontrol OK ({} ms)",
+            "Fallen++: {} — semantik kontrol OK ({} ms)",
             opts.input.display(),
             t_sema.as_millis()
         );
@@ -243,7 +240,7 @@ fn real_main() -> Result<(), String> {
         let asm_path = out.with_extension("s");
         fs::write(&asm_path, &asm)
             .map_err(|e| format!("{} yazılamadı: {}", asm_path.display(), e))?;
-        eprintln!("Fallen: {}", asm_path.display());
+        eprintln!("Fallen++: {}", asm_path.display());
     } else {
         let stem = opts
             .input
@@ -288,10 +285,10 @@ fn real_main() -> Result<(), String> {
         } else {
             let keep = out.with_extension("s");
             let _ = fs::copy(&asm_path, &keep);
-            eprintln!("Fallen: assembly korundu -> {}", keep.display());
+            eprintln!("Fallen++: assembly korundu -> {}", keep.display());
         }
         let _ = fs::remove_file(&obj_path);
-        eprintln!("Fallen: {} -> {}", opts.input.display(), out.display());
+        eprintln!("Fallen++: {} -> {}", opts.input.display(), out.display());
     }
 
     if opts.stats {

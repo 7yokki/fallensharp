@@ -206,6 +206,110 @@ impl<'a> Codegen<'a> {
             self.emit("  movzbq %al, %rax");
             self.emit("  ret");
         }
+        if self.helpers.contains("fpp_stdout") {
+            self.emit("__fallen_stdout:");
+            self.emit("  push %rbp");
+            self.emit("  mov %rsp, %rbp");
+            self.emit("  mov stdout(%rip), %rsi");
+            self.emit("  call fputs");
+            self.emit("  leave");
+            self.emit("  ret");
+        }
+        if self.helpers.contains("fpp_stderr") {
+            self.emit("__fallen_stderr:");
+            self.emit("  push %rbp");
+            self.emit("  mov %rsp, %rbp");
+            self.emit("  mov stderr(%rip), %rsi");
+            self.emit("  call fputs");
+            self.emit("  leave");
+            self.emit("  ret");
+        }
+        if self.helpers.contains("fpp_readline") {
+            self.emit("__fallen_readline:");
+            self.emit("  push %rbp");
+            self.emit("  mov %rsp, %rbp");
+            self.emit("  test %rdi, %rdi");
+            self.emit("  je .Lfpp_read_noprompt");
+            self.emit("  mov stdout(%rip), %rsi");
+            self.emit("  call fputs");
+            self.emit("  mov stdout(%rip), %rdi");
+            self.emit("  call fflush");
+            self.emit(".Lfpp_read_noprompt:");
+            self.emit("  lea __fallen_lineptr(%rip), %rdi");
+            self.emit("  lea __fallen_linecap(%rip), %rsi");
+            self.emit("  mov stdin(%rip), %rdx");
+            self.emit("  call getline");
+            self.emit("  cmp $0, %rax");
+            self.emit("  jle .Lfpp_read_null");
+            self.emit("  mov __fallen_lineptr(%rip), %rdi");
+            self.emit("  lea .Lfpp_newline(%rip), %rsi");
+            self.emit("  call strcspn");
+            self.emit("  mov __fallen_lineptr(%rip), %rdx");
+            self.emit("  movb $0, (%rdx,%rax)");
+            self.emit("  mov %rdx, %rax");
+            self.emit("  leave");
+            self.emit("  ret");
+            self.emit(".Lfpp_read_null:");
+            self.emit("  xor %eax, %eax");
+            self.emit("  leave");
+            self.emit("  ret");
+        }
+        if self.helpers.contains("fpp_exec") {
+            self.emit("__fallen_exec:");
+            self.emit("  push %rbp");
+            self.emit("  mov %rsp, %rbp");
+            self.emit("  push %rbx");
+            self.emit("  push %r12");
+            self.emit("  mov %rdi, %rbx");
+            self.emit("  test %esi, %esi");
+            self.emit("  jne .Lfpp_exec_capture");
+            self.emit("  mov %rbx, %rdi");
+            self.emit("  call system");
+            self.emit("  lea .Lfpp_empty(%rip), %rax");
+            self.emit("  jmp .Lfpp_exec_done");
+            self.emit(".Lfpp_exec_capture:");
+            self.emit("  mov %rbx, %rdi");
+            self.emit("  lea .Lfpp_mode_r(%rip), %rsi");
+            self.emit("  call popen");
+            self.emit("  test %rax, %rax");
+            self.emit("  je .Lfpp_exec_fail");
+            self.emit("  mov %rax, %r12");
+            self.emit("  lea __fallen_execbuf(%rip), %rdi");
+            self.emit("  mov $1, %esi");
+            self.emit("  mov $65535, %edx");
+            self.emit("  mov %r12, %rcx");
+            self.emit("  call fread");
+            self.emit("  lea __fallen_execbuf(%rip), %rdi");
+            self.emit("  movb $0, (%rdi,%rax)");
+            self.emit("  mov %r12, %rdi");
+            self.emit("  call pclose");
+            self.emit("  lea __fallen_execbuf(%rip), %rax");
+            self.emit("  jmp .Lfpp_exec_done");
+            self.emit(".Lfpp_exec_fail:");
+            self.emit("  lea .Lfpp_empty(%rip), %rax");
+            self.emit(".Lfpp_exec_done:");
+            self.emit("  pop %r12");
+            self.emit("  pop %rbx");
+            self.emit("  pop %rbp");
+            self.emit("  ret");
+        }
+        if self.helpers.contains("fpp_readline") || self.helpers.contains("fpp_exec") {
+            self.emit(".pushsection .rodata");
+            self.emit(".Lfpp_newline:");
+            self.emit("  .byte 10,0");
+            self.emit(".Lfpp_mode_r:");
+            self.emit("  .byte 114,0");
+            self.emit(".Lfpp_empty:");
+            self.emit("  .byte 0");
+            self.emit(".popsection");
+        }
+        if self.helpers.contains("fpp_readline") {
+            self.emit(".comm __fallen_lineptr,8,8");
+            self.emit(".comm __fallen_linecap,8,8");
+        }
+        if self.helpers.contains("fpp_exec") {
+            self.emit(".comm __fallen_execbuf,65536,16");
+        }
 
         let globals = std::mem::take(&mut self.globals);
         let initialized: Vec<&GlobalDef> = globals
@@ -965,6 +1069,14 @@ impl<'a> Codegen<'a> {
                 self.helpers.insert("wifexited".into());
             } else if n == "__fallen_wifsignaled" {
                 self.helpers.insert("wifsignaled".into());
+            } else if n == "__fallen_stdout" {
+                self.helpers.insert("fpp_stdout".into());
+            } else if n == "__fallen_stderr" {
+                self.helpers.insert("fpp_stderr".into());
+            } else if n == "__fallen_readline" {
+                self.helpers.insert("fpp_readline".into());
+            } else if n == "__fallen_exec" {
+                self.helpers.insert("fpp_exec".into());
             }
         }
 

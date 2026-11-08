@@ -1,11 +1,11 @@
 [package]
-name = "fallen"
-version = "0.3.0"
+name = "fallenpp"
+version = "0.1.0"
 edition = "2021"
-description = "Fallen: C syntax, Rust-grade memory safety, direct-to-machine-code compiler"
+description = "Fallen++: sade sözdizimi, bellek güvenliği ve doğrudan makine kodu"
 
 [[bin]]
-name = "fallen"
+name = "fallenpp"
 path = "src/main.rs"
 
 [profile.release]

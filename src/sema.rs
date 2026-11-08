@@ -224,6 +224,10 @@ impl Sema {
         add("_exit", Type::Void, vec![int.clone()], false);
         add("__fallen_wifexited", int.clone(), vec![int.clone()], false);
         add("__fallen_wifsignaled", int.clone(), vec![int.clone()], false);
+        add("__fallen_stdout", void.clone(), vec![cptr.clone()], false);
+        add("__fallen_stderr", void.clone(), vec![cptr.clone()], false);
+        add("__fallen_readline", cptr.clone(), vec![cptr.clone()], false);
+        add("__fallen_exec", cptr.clone(), vec![cptr.clone(), int.clone()], false);
 
         Sema {
             classes: HashMap::new(),
