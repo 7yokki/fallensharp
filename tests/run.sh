@@ -47,4 +47,18 @@ set -e
 [ "$code" -eq 1 ] && echo "$out" | grep -q "sifira bolme" || { echo "safe_div FAIL"; exit 1; }
 echo "ok safe_div"
 
+$F build tests/fpp/arrays.fpp -o "$TMP/arrays" >/dev/null
+out=$("$TMP/arrays")
+[ "$out" = $'Selam
+ok' ] || { echo "arrays FAIL: $out"; exit 1; }
+echo "ok arrays"
+
+$F build tests/fpp/bounds.fpp -o "$TMP/bounds" >/dev/null
+set +e
+out=$("$TMP/bounds" 2>&1)
+code=$?
+set -e
+[ "$code" -eq 1 ] && echo "$out" | grep -q "sinir ihlali" || { echo "bounds FAIL"; exit 1; }
+echo "ok bounds"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

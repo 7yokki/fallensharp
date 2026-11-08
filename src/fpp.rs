@@ -515,6 +515,10 @@ impl Parser {
                 } else {
                     Type::Int
                 };
+                let ty = match ty {
+                    Type::Array(elem, _) => Type::Ptr(elem),
+                    other => other,
+                };
                 params.push(VarDecl {
                     name: pname,
                     ty,
@@ -849,7 +853,7 @@ impl Parser {
             return Ok(Type::Array(Box::new(inner), n));
         }
         let name = self.expect_name()?;
-        Ok(match name.as_str() {
+        let base = match name.as_str() {
             "void" => Type::Void,
             "int" | "bool" | "float" | "double" => Type::Int,
             "uint" => Type::UInt,
@@ -861,7 +865,16 @@ impl Parser {
             "uchar" => Type::UChar,
             "string" => Type::ptr(Type::Char),
             other => Type::Class(other.to_string()),
-        })
+        };
+        if self.eat_punct("[") {
+            let n = match self.advance() {
+                Tk::Int(v) if v > 0 => v as usize,
+                _ => return Err(self.err("dizi boyutu pozitif tam sayı olmalı".into())),
+            };
+            self.expect_punct("]")?;
+            return Ok(Type::Array(Box::new(base), n));
+        }
+        Ok(base)
     }
 
     fn parse_expr(&mut self) -> PResult<Expr> {
