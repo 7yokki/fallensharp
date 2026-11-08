@@ -1,0 +1,6 @@
+/target
+*.s
+*.o
+agent.md
+Arşiv.zip
+*.zip
