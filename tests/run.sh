@@ -31,4 +31,20 @@ out=$(printf 'echo test\n' | "$TMP/shell")
 echo "$out" | grep -q "test" || { echo "shell FAIL: $out"; exit 1; }
 echo "ok shell"
 
+$F build tests/fpp/safe_null.fpp -o "$TMP/safe_null" --memory=safe >/dev/null
+set +e
+out=$(printf '' | "$TMP/safe_null" 2>&1)
+code=$?
+set -e
+[ "$code" -eq 1 ] && echo "$out" | grep -q "null pointer" || { echo "safe_null FAIL"; exit 1; }
+echo "ok safe_null"
+
+$F build tests/fpp/safe_div.fpp -o "$TMP/safe_div" --memory=safe >/dev/null
+set +e
+out=$("$TMP/safe_div" 2>&1)
+code=$?
+set -e
+[ "$code" -eq 1 ] && echo "$out" | grep -q "sifira bolme" || { echo "safe_div FAIL"; exit 1; }
+echo "ok safe_div"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

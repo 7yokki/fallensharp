@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::sema::{ClassInfo, FuncSig};
+use crate::memory::MemoryMode;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -50,12 +51,14 @@ pub struct Codegen<'a> {
     helpers: HashSet<String>,
     cur: FuncState,
     globals: Vec<GlobalDef>,
+    memory: MemoryMode,
 }
 
 impl<'a> Codegen<'a> {
     pub fn new(
         classes: &'a HashMap<String, ClassInfo>,
         funcs: &'a HashMap<String, FuncSig>,
+        memory: MemoryMode,
     ) -> Self {
         Codegen {
             classes,
@@ -73,6 +76,7 @@ impl<'a> Codegen<'a> {
                 fork_vars: HashSet::new(),
             },
             globals: Vec::new(),
+            memory,
         }
     }
 
@@ -184,6 +188,30 @@ impl<'a> Codegen<'a> {
             self.emit("  mov $1, %edi");
             self.emit("  call exit");
             self.helpers.insert("panic_msg".into());
+        }
+        if self.helpers.contains("null") {
+            self.emit("__fallen_null_fail:");
+            self.emit("  mov $1, %rax");
+            self.emit("  mov $1, %rdi");
+            self.emit("  lea .Lpanic_null(%rip), %rsi");
+            self.emitf(format_args!("  mov ${}, %rdx", NULL_MSG.len()));
+            self.emit("  syscall");
+            self.emit("  and $-16, %rsp");
+            self.emit("  mov $1, %edi");
+            self.emit("  call exit");
+            self.helpers.insert("panic_null_msg".into());
+        }
+        if self.helpers.contains("div") {
+            self.emit("__fallen_div_fail:");
+            self.emit("  mov $1, %rax");
+            self.emit("  mov $1, %rdi");
+            self.emit("  lea .Lpanic_div(%rip), %rsi");
+            self.emitf(format_args!("  mov ${}, %rdx", DIV_MSG.len()));
+            self.emit("  syscall");
+            self.emit("  and $-16, %rsp");
+            self.emit("  mov $1, %edi");
+            self.emit("  call exit");
+            self.helpers.insert("panic_div_msg".into());
         }
         if self.helpers.contains("wifexited") {
             self.emit("__fallen_wifexited:");
@@ -370,7 +398,13 @@ impl<'a> Codegen<'a> {
         }
 
         let rodata = std::mem::take(&mut self.rodata);
-        if !rodata.is_empty() || self.helpers.contains("panic_msg") {
+        let need_panic_null = self.helpers.contains("panic_null_msg");
+        let need_panic_div = self.helpers.contains("panic_div_msg");
+        if !rodata.is_empty()
+            || self.helpers.contains("panic_msg")
+            || need_panic_null
+            || need_panic_div
+        {
             self.emit(".section .rodata");
             for (label, bytes) in &rodata {
                 self.emitf(format_args!("{}:", label));
@@ -392,6 +426,30 @@ impl<'a> Codegen<'a> {
                 self.emit(".Lpanic_bounds:");
                 let mut line = String::from("  .byte ");
                 for (i, b) in BOUNDS_MSG.iter().enumerate() {
+                    if i > 0 {
+                        line.push(',');
+                    }
+                    let _ = write!(line, "{}", b);
+                }
+                self.out.push_str(&line);
+                self.out.push('\n');
+            }
+            if need_panic_null {
+                self.emit(".Lpanic_null:");
+                let mut line = String::from("  .byte ");
+                for (i, b) in NULL_MSG.iter().enumerate() {
+                    if i > 0 {
+                        line.push(',');
+                    }
+                    let _ = write!(line, "{}", b);
+                }
+                self.out.push_str(&line);
+                self.out.push('\n');
+            }
+            if need_panic_div {
+                self.emit(".Lpanic_div:");
+                let mut line = String::from("  .byte ");
+                for (i, b) in DIV_MSG.iter().enumerate() {
                     if i > 0 {
                         line.push(',');
                     }
@@ -812,6 +870,11 @@ impl<'a> Codegen<'a> {
             }
             ExprKind::Un(UnOp::Deref, inner) => {
                 self.gen_expr(inner)?;
+                if self.memory.at_least_safe() {
+                    self.helpers.insert("null".into());
+                    self.emit("  test %rax, %rax");
+                    self.emit("  je __fallen_null_fail");
+                }
                 self.load_at("%rax", &ty);
             }
             ExprKind::Un(UnOp::AddrOf, inner) => {
@@ -1006,6 +1069,11 @@ impl<'a> Codegen<'a> {
             }
             BinOp::Mul => self.emit("  imul %rcx, %rax"),
             BinOp::Div | BinOp::Mod => {
+                if self.memory.at_least_safe() {
+                    self.helpers.insert("div".into());
+                    self.emit("  test %rcx, %rcx");
+                    self.emit("  je __fallen_div_fail");
+                }
                 if at.is_signed() && bt.is_signed() {
                     self.emit("  cqto");
                     self.emit("  idiv %rcx");
@@ -1156,6 +1224,11 @@ impl<'a> Codegen<'a> {
                     self.gen_addr(base)?;
                 } else {
                     self.gen_expr(base)?;
+                    if self.memory.at_least_safe() {
+                        self.helpers.insert("null".into());
+                        self.emit("  test %rax, %rax");
+                        self.emit("  je __fallen_null_fail");
+                    }
                 }
                 self.emit("  mov %rax, %r10");
                 self.pop_to("%rcx");
@@ -1174,6 +1247,11 @@ impl<'a> Codegen<'a> {
             }
             ExprKind::Un(UnOp::Deref, inner) => {
                 self.gen_expr(inner)?;
+                if self.memory.at_least_safe() {
+                    self.helpers.insert("null".into());
+                    self.emit("  test %rax, %rax");
+                    self.emit("  je __fallen_null_fail");
+                }
             }
             _ => {
                 return Err(format!("satır {}: bu ifade adreslenemez", e.line));
@@ -1288,3 +1366,5 @@ fn dword_reg(reg: &str) -> &'static str {
 }
 
 const BOUNDS_MSG: &[u8] = b"Fallen: dizi sinir ihlali (bellek korumasi)\n";
+const NULL_MSG: &[u8] = b"Fallen++: null pointer erisimi\n";
+const DIV_MSG: &[u8] = b"Fallen++: sifira bolme\n";

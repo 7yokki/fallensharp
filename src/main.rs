@@ -4,6 +4,7 @@ mod ast;
 mod codegen;
 mod fpp;
 mod lexer;
+mod memory;
 mod parser;
 mod preprocess;
 mod sema;
@@ -13,7 +14,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::io::IsTerminal;
 use std::time::Instant;
+use memory::MemoryMode;
 
 fn usage() {
     eprintln!(
@@ -34,6 +37,7 @@ struct Options {
     emit_asm_only: bool,
     stats: bool,
     keep_asm: bool,
+    memory: Option<MemoryMode>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -60,6 +64,7 @@ fn parse_args() -> Result<Options, String> {
                 emit_asm_only: false,
                 stats: false,
                 keep_asm: false,
+                memory: None,
             };
             for a in it {
                 match a.as_str() {
@@ -67,6 +72,10 @@ fn parse_args() -> Result<Options, String> {
                     "-S" => opts.emit_asm_only = true,
                     "--stats" => opts.stats = true,
                     "--keep-asm" => opts.keep_asm = true,
+                    "--memory" => {}
+                    other if other.starts_with("--memory=") => {
+                        opts.memory = MemoryMode::parse(&other["--memory=".len()..]);
+                    }
                     _ => {}
                 }
             }
@@ -85,6 +94,7 @@ fn parse_args() -> Result<Options, String> {
         emit_asm_only: false,
         stats: false,
         keep_asm: false,
+        memory: None,
     };
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -95,10 +105,51 @@ fn parse_args() -> Result<Options, String> {
             "-S" => opts.emit_asm_only = true,
             "--stats" => opts.stats = true,
             "--keep-asm" => opts.keep_asm = true,
+            "--memory" => {
+                let v = args
+                    .next()
+                    .ok_or_else(|| "--memory için değer gerekli (stack|safe|own)".to_string())?;
+                opts.memory = Some(
+                    MemoryMode::parse(&v)
+                        .ok_or_else(|| format!("geçersiz bellek modeli: {}", v))?,
+                );
+            }
+            other if other.starts_with("--memory=") => {
+                let v = &other["--memory=".len()..];
+                opts.memory = Some(
+                    MemoryMode::parse(v)
+                        .ok_or_else(|| format!("geçersiz bellek modeli: {}", v))?,
+                );
+            }
             other => return Err(format!("bilinmeyen seçenek: {}", other)),
         }
     }
     Ok(opts)
+}
+
+fn resolve_memory(requested: Option<MemoryMode>) -> Result<MemoryMode, String> {
+    if let Some(m) = requested {
+        return Ok(m);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Ok(MemoryMode::Stack);
+    }
+    eprintln!("Fallen++ bellek modeli:");
+    eprintln!("  1) stack : en hızlı derleme, temel dizi sınır kontrolleri");
+    eprintln!("  2) safe  : null/sıfıra bölme kontrolleri + temel güvenlik");
+    eprintln!("  3) own   : ownership/borrow analizi (en güvenli, en yavaş derleme)");
+    eprint!("Seçim [1]: ");
+    use std::io::Write;
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| format!("bellek modeli okunamadı: {}", e))?;
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(MemoryMode::Stack);
+    }
+    MemoryMode::parse(line).ok_or_else(|| format!("geçersiz bellek modeli: {}", line))
 }
 
 fn default_output(input: &Path) -> PathBuf {
@@ -176,6 +227,8 @@ fn main() {
 
 fn real_main() -> Result<(), String> {
     let opts = parse_args()?;
+    let memory = resolve_memory(opts.memory)?;
+    eprintln!("Fallen++: bellek modeli = {}", memory.label());
     let src = fs::read_to_string(&opts.input)
         .map_err(|e| format!("{} okunamadı: {}", opts.input.display(), e))?;
 
@@ -184,7 +237,7 @@ fn real_main() -> Result<(), String> {
     let t_lex = t0.elapsed();
     let t_parse = t0.elapsed();
 
-    let mut sema = sema::Sema::new();
+    let mut sema = sema::Sema::new(memory);
     sema.analyze(&mut program)
         .map_err(|e| format!("anlamsal hata: {}", e))?;
     let t_sema = t0.elapsed();
@@ -215,7 +268,7 @@ fn real_main() -> Result<(), String> {
         return Ok(());
     }
 
-    let cg = codegen::Codegen::new(&sema.classes, &sema.funcs);
+    let cg = codegen::Codegen::new(&sema.classes, &sema.funcs, memory);
     let asm = cg
         .generate(&program)
         .map_err(|e| format!("kod üretim hatası: {}", e))?;

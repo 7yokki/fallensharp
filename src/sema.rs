@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::memory::MemoryMode;
 use crate::types::{align_up, Type};
 use std::collections::{HashMap, HashSet};
 
@@ -51,6 +52,7 @@ pub struct Sema {
     pub externs: HashMap<String, FuncSig>,
     pub globals: HashMap<String, Type>,
     pub report: Vec<MemoryReport>,
+    pub memory: MemoryMode,
 }
 
 struct VarSlot {
@@ -72,7 +74,7 @@ struct FnCtx {
 type SResult<T> = Result<T, String>;
 
 impl Sema {
-    pub fn new() -> Self {
+    pub fn new(memory: MemoryMode) -> Self {
         let mut externs = HashMap::new();
         let int = Type::Int;
         let void = Type::Void;
@@ -235,6 +237,7 @@ impl Sema {
             externs,
             globals: HashMap::new(),
             report: Vec::new(),
+            memory,
         }
     }
 
