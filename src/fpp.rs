@@ -515,9 +515,9 @@ impl Parser {
                 } else {
                     Type::Int
                 };
-                let ty = match ty {
-                    Type::Array(elem, _) => Type::Ptr(elem),
-                    other => other,
+                let (ty, bound) = match ty {
+                    Type::Array(elem, n) => (Type::Ptr(elem), Some(n)),
+                    other => (other, None),
                 };
                 params.push(VarDecl {
                     name: pname,
@@ -525,6 +525,7 @@ impl Parser {
                     init: None,
                     ctor_args: Vec::new(),
                     offset: None,
+                    bound,
                     line: pline,
                 });
                 self.skip_newlines();
@@ -748,6 +749,7 @@ impl Parser {
             init,
             ctor_args: Vec::new(),
             offset: None,
+            bound: None,
             line,
         }))
     }
@@ -838,10 +840,15 @@ impl Parser {
                 | "float"
                 | "double"
                 | "byte"
+                | "ptr"
         )
     }
 
     fn parse_type(&mut self) -> PResult<Type> {
+        if self.eat_punct("*") {
+            let inner = self.parse_type()?;
+            return Ok(Type::Ptr(Box::new(inner)));
+        }
         if self.eat_punct("[") {
             let inner = self.parse_type()?;
             self.expect_punct(";")?;
@@ -864,6 +871,7 @@ impl Parser {
             "char" | "byte" => Type::Char,
             "uchar" => Type::UChar,
             "string" => Type::ptr(Type::Char),
+            "ptr" => Type::Ptr(Box::new(self.parse_type()?)),
             other => Type::Class(other.to_string()),
         };
         if self.eat_punct("[") {
@@ -1191,6 +1199,8 @@ impl Parser {
             Some("stdout") => "__fallen_stdout".to_string(),
             Some("stderr") => "__fallen_stderr".to_string(),
             Some("stdin") => "__fallen_readline".to_string(),
+            Some("alloc") => "malloc".to_string(),
+            Some("free") => "free".to_string(),
             Some("system.exec") => "__fallen_exec".to_string(),
             Some(n) if n.starts_with("fncall.") => n["fncall.".len()..].to_string(),
             Some(n) if n.contains('.') => n.replace('.', "_"),

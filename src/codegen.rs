@@ -1232,7 +1232,12 @@ impl<'a> Codegen<'a> {
                 }
                 self.emit("  mov %rax, %r10");
                 self.pop_to("%rcx");
-                if let Type::Array(_, n) = &bt {
+                let bound = match &bt {
+                    Type::Array(_, n) => Some(*n),
+                    Type::Ptr(_) => base.bound,
+                    _ => None,
+                };
+                if let Some(n) = bound {
                     self.helpers.insert("bounds".into());
                     self.emit("  cmp $0, %rcx");
                     self.emit("  jl __fallen_bounds_fail");

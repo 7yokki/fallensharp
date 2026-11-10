@@ -61,4 +61,29 @@ set -e
 [ "$code" -eq 1 ] && echo "$out" | grep -q "sinir ihlali" || { echo "bounds FAIL"; exit 1; }
 echo "ok bounds"
 
+$F build tests/fpp/fatptr.fpp -o "$TMP/fatptr" >/dev/null
+set +e
+out=$("$TMP/fatptr" 2>&1)
+code=$?
+set -e
+[ "$code" -eq 1 ] && echo "$out" | grep -q "sinir ihlali" || { echo "fatptr FAIL"; exit 1; }
+echo "ok fatptr"
+
+$F build tests/fpp/own_ok.fpp -o "$TMP/own_ok" --memory=own >/dev/null
+out=$("$TMP/own_ok")
+[ "$out" = "owned ok" ] || { echo "own_ok FAIL: $out"; exit 1; }
+echo "ok own_ok"
+
+if $F build tests/fpp/own_uaf.fpp -o "$TMP/own_uaf" --memory=own >/dev/null 2>"$TMP/own_uaf.err"; then
+    echo "own_uaf FAIL: beklenmedik şekilde derlendi"; exit 1
+fi
+grep -q "taşınmış" "$TMP/own_uaf.err" || { echo "own_uaf FAIL: yanlış tanı"; cat "$TMP/own_uaf.err"; exit 1; }
+echo "ok own_uaf"
+
+if $F build tests/fpp/own_double_free.fpp -o "$TMP/own_df" --memory=own >/dev/null 2>"$TMP/own_df.err"; then
+    echo "own_double_free FAIL: beklenmedik şekilde derlendi"; exit 1
+fi
+grep -q "double free" "$TMP/own_df.err" || { echo "own_double_free FAIL: yanlış tanı"; cat "$TMP/own_df.err"; exit 1; }
+echo "ok own_double_free"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

@@ -58,6 +58,7 @@ pub struct Sema {
 struct VarSlot {
     ty: Type,
     offset: i64,
+    bound: Option<usize>,
 }
 
 struct FnCtx {
@@ -69,6 +70,8 @@ struct FnCtx {
     this_offset: Option<i64>,
     loop_depth: usize,
     switch_depth: usize,
+    owned: std::collections::HashSet<String>,
+    moved: std::collections::HashSet<String>,
 }
 
 type SResult<T> = Result<T, String>;
@@ -471,25 +474,42 @@ impl Sema {
         off
     }
 
-    fn declare(&self, ctx: &mut FnCtx, name: &str, ty: Type, offset: i64) {
+    fn declare(
+        &self,
+        ctx: &mut FnCtx,
+        name: &str,
+        ty: Type,
+        offset: i64,
+        bound: Option<usize>,
+    ) {
         if let Some(scope) = ctx.scopes.last_mut() {
             scope.insert(
                 name.to_string(),
                 VarSlot {
                     ty,
                     offset,
+                    bound,
                 },
             );
         }
     }
 
-    fn lookup(&self, ctx: &FnCtx, name: &str) -> Option<(Type, i64)> {
+    fn lookup(&self, ctx: &FnCtx, name: &str) -> Option<(Type, i64, Option<usize>)> {
         for scope in ctx.scopes.iter().rev() {
             if let Some(v) = scope.get(name) {
-                return Some((v.ty.clone(), v.offset));
+                return Some((v.ty.clone(), v.offset, v.bound));
             }
         }
         None
+    }
+
+    fn set_bound(&self, ctx: &mut FnCtx, name: &str, bound: Option<usize>) {
+        for scope in ctx.scopes.iter_mut().rev() {
+            if let Some(v) = scope.get_mut(name) {
+                v.bound = bound;
+                return;
+            }
+        }
     }
 
     fn analyze_func(&mut self, f: &mut FuncDecl) -> SResult<()> {
@@ -502,6 +522,8 @@ impl Sema {
             this_offset: None,
             loop_depth: 0,
             switch_depth: 0,
+            owned: std::collections::HashSet::new(),
+            moved: std::collections::HashSet::new(),
         };
 
         if f.is_method {
@@ -510,7 +532,7 @@ impl Sema {
             let off = self.alloc(&mut ctx, &ty);
             ctx.this_offset = Some(off);
             f.this_offset = Some(off);
-            self.declare(&mut ctx, "this", ty, off);
+            self.declare(&mut ctx, "this", ty, off, None);
         }
 
         for p in f.params.iter_mut() {
@@ -522,7 +544,7 @@ impl Sema {
             }
             let off = self.alloc(&mut ctx, &p.ty);
             p.offset = Some(off);
-            self.declare(&mut ctx, p.name.clone().as_str(), p.ty.clone(), off);
+            self.declare(&mut ctx, p.name.clone().as_str(), p.ty.clone(), off, p.bound);
         }
 
         self.analyze_stmt(&mut f.body, &mut ctx)?;
@@ -561,7 +583,7 @@ impl Sema {
                 }
                 let off = self.alloc(ctx, &v.ty);
                 v.offset = Some(off);
-                self.declare(ctx, &v.name, v.ty.clone(), off);
+                self.declare(ctx, &v.name, v.ty.clone(), off, v.bound);
                 for a in v.ctor_args.iter_mut() {
                     self.analyze_expr(a, ctx)?;
                 }
@@ -617,6 +639,39 @@ impl Sema {
                     check_assignable(&v.ty, &it).map_err(|m| {
                         format!("satır {}: değişken '{}': {}", v.line, v.name, m)
                     })?;
+                    let init_bound = match &init.ty {
+                        Some(Type::Array(_, n)) => Some(*n),
+                        _ => init.bound,
+                    };
+                    if matches!(v.ty, Type::Ptr(_)) {
+                        v.bound = init_bound;
+                        self.set_bound(ctx, &v.name, init_bound);
+                    } else if let Type::Array(_, n) = &v.ty {
+                        v.bound = Some(*n);
+                        self.set_bound(ctx, &v.name, Some(*n));
+                    }
+                    if self.memory == MemoryMode::Own {
+                        if let ExprKind::Ident(src) = &init.kind {
+                            if ctx.owned.contains(src) {
+                                if ctx.owned.contains(&v.name) && !ctx.moved.contains(&v.name) {
+                                    return Err(format!(
+                                        "satır {}: '{}' hâlâ sahip olduğu belleği serbest bırakmadan taşınamaz",
+                                        v.line, v.name
+                                    ));
+                                }
+                                ctx.owned.remove(src);
+                                ctx.moved.insert(src.clone());
+                                ctx.owned.insert(v.name.clone());
+                            }
+                        } else if let ExprKind::Call(callee, _) = &init.kind {
+                            if matches!(&callee.kind, ExprKind::Ident(n) if n == "malloc" || n == "calloc") {
+                                ctx.owned.insert(v.name.clone());
+                            }
+                        }
+                    }
+                } else if let Type::Array(_, n) = &v.ty {
+                    v.bound = Some(*n);
+                    self.set_bound(ctx, &v.name, Some(*n));
                 }
             }
             Stmt::Expr(e) => {
@@ -773,6 +828,7 @@ impl Sema {
             ExprKind::Str(b) => {
                 let n = b.len() + 1;
                 e.ty = Some(Type::Array(Box::new(Type::Char), n));
+                e.bound = Some(n);
             }
             ExprKind::This => {
                 let owner = ctx
@@ -785,9 +841,16 @@ impl Sema {
                 }
             }
             ExprKind::Ident(name) => {
-                if let Some((ty, off)) = self.lookup(ctx, name) {
+                if let Some((ty, off, bound)) = self.lookup(ctx, name) {
+                    if self.memory == MemoryMode::Own && ctx.moved.contains(name) {
+                        return Err(format!(
+                            "satır {}: '{}' taşınmış/serbest bırakılmış, tekrar kullanılamaz",
+                            e.line, name
+                        ));
+                    }
                     e.ty = Some(ty);
                     e.place = Some(Place::Local(off));
+                    e.bound = bound;
                 } else if let Some(ty) = self.globals.get(name) {
                     e.ty = Some(ty.clone());
                     e.place = Some(Place::Global(name.clone()));
@@ -848,7 +911,12 @@ impl Sema {
                         e.ty = Some(t);
                     }
                     UnOp::AddrOf => {
+                        let bound = match &ta {
+                            Type::Array(_, n) => Some(*n),
+                            _ => a.bound,
+                        };
                         e.ty = Some(Type::Ptr(Box::new(ta)));
+                        e.bound = bound;
                     }
                     UnOp::Not => e.ty = Some(Type::Int),
                     UnOp::Neg | UnOp::BitNot => e.ty = Some(usual_arith(&ta, &ta)),
@@ -867,6 +935,31 @@ impl Sema {
                 let rt = r.ty.clone().unwrap_or(Type::Int);
                 check_assignable(&lt, &rt)
                     .map_err(|m| format!("satır {}: atama: {}", e.line, m))?;
+                if lt.is_pointer() {
+                    if let ExprKind::Ident(name) = &l.kind {
+                        let bound = match &r.ty {
+                            Some(Type::Array(_, n)) => Some(*n),
+                            _ => r.bound,
+                        };
+                        self.set_bound(ctx, name, bound);
+                        if self.memory == MemoryMode::Own {
+                            if let ExprKind::Ident(src) = &r.kind {
+                                if ctx.owned.contains(src) {
+                                    if ctx.owned.contains(name) && !ctx.moved.contains(name) {
+                                        return Err(format!(
+                                            "satır {}: '{}' hâlâ sahip olduğu belleği serbest bırakmadan taşınamaz",
+                                            e.line, name
+                                        ));
+                                    }
+                                    ctx.owned.remove(src);
+                                    ctx.moved.insert(src.clone());
+                                    ctx.owned.remove(name);
+                                    ctx.owned.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 e.ty = Some(lt);
             }
             ExprKind::CompoundAssign(_, l, r) => {
@@ -952,8 +1045,36 @@ impl Sema {
                 } else {
                     return Err(format!("satır {}: geçersiz fonksiyon çağrısı", e.line));
                 };
+                let mut free_target: Option<String> = None;
+                if self.memory == MemoryMode::Own {
+                    if let ExprKind::Ident(callee_name) = &callee.kind {
+                        if callee_name == "free" {
+                            if let Some(first) = args.first() {
+                                if let ExprKind::Ident(name) = &first.kind {
+                                    if ctx.moved.contains(name) {
+                                        return Err(format!(
+                                            "satır {}: '{}' ikinci kez serbest bırakılıyor (double free)",
+                                            e.line, name
+                                        ));
+                                    }
+                                    if !ctx.owned.contains(name) {
+                                        return Err(format!(
+                                            "satır {}: '{}' sahip olunmayan bir pointer, free edilemez",
+                                            e.line, name
+                                        ));
+                                    }
+                                    free_target = Some(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 for a in args.iter_mut() {
                     self.analyze_expr(a, ctx)?;
+                }
+                if let Some(name) = free_target {
+                    ctx.owned.remove(&name);
+                    ctx.moved.insert(name);
                 }
                 if let Some(s) = sig {
                     if !s.variadic && args.len() != s.params.len() {

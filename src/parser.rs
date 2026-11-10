@@ -505,6 +505,7 @@ impl Parser {
                 init: None,
                 ctor_args: Vec::new(),
                 offset: None,
+                bound: None,
                 line,
             });
             idx += 1;
@@ -571,6 +572,7 @@ impl Parser {
                 init,
                 ctor_args: Vec::new(),
                 offset: None,
+                bound: None,
                 line,
             }));
             if !self.eat_punct(",") {
@@ -774,6 +776,7 @@ impl Parser {
                 init,
                 ctor_args,
                 offset: None,
+                bound: None,
                 line,
             }));
             if !self.eat_punct(",") {

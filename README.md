@@ -69,14 +69,28 @@ Kurallar:
 - `if` / `else`, `loop` / `do`, `while`, `break`, `continue`, `return`.
 - Aritmetik, karşılaştırma, mantıksal, bit düzeyi ve atama operatörleri.
 - Dizi sınır kontrolü, otomatik sıfır başlatma.
+- Derleme zamanı "fat pointer" izleme: `p ptr int => dizi` sonrasında `p[i]`
+  erişimi dizinin bilinen uzunluğuna göre sınır kontrolünden geçer.
+- `own` belleğinde `alloc`/`free` sahiplik denetimi: use-after-free, double-free
+  ve sahipsiz `free` derleme zamanında reddedilir.
 - Doğrudan SysV x86-64 kod üretimi ve libc bağlantısı.
+
+## Bellek modelleri
+
+```bash
+target/release/fallenpp build dosya.fpp --memory=stack   # en hızlı
+target/release/fallenpp build dosya.fpp --memory=safe    # null/bölme/sınır
+target/release/fallenpp build dosya.fpp --memory=own     # + sahiplik analizi
+```
+
+Bayrak verilmezse ve terminal etkileşimliyse derleyici seçim sorar; boru/CI
+ortamlarında `stack` varsayılanı kullanılır.
 
 ## Yol haritası
 
-- Bellek politikası seçimi (`--memory=stack|safe|own`) ve etkileşimli seçim.
-- Fat pointer ile decay sonrası sınır koruması, null güvenliği.
-- Ownership/borrow kontrolü, otomatik `drop`.
 - `float`/`double` (SSE), 6+ argüman, aggregate dönüş/parametre.
+- Çalışma zamanı uzunluk taşıyan tam fat pointer (fonksiyon geçişlerinde koruma).
+- Borrow checker, otomatik `drop`, kapsam sonu temizlik.
 - Kalıtım, sanal metotlar, destructor, fonksiyon pointer'ları.
 - Gerçek modül sistemi ve standart kütüphane.
 - Satır/kolon bazlı tanılamalar, AST/IR çıktıları, fuzz ve golden testler.

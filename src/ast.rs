@@ -41,6 +41,7 @@ pub struct Expr {
     pub ty: Option<Type>,
     pub place: Option<Place>,
     pub call_label: Option<String>,
+    pub bound: Option<usize>,
     pub line: usize,
 }
 
@@ -51,6 +52,7 @@ impl Expr {
             ty: None,
             place: None,
             call_label: None,
+            bound: None,
             line,
         }
     }
@@ -94,6 +96,7 @@ pub struct VarDecl {
     pub init: Option<Expr>,
     pub ctor_args: Vec<Expr>,
     pub offset: Option<i64>,
+    pub bound: Option<usize>,
     pub line: usize,
 }
 
