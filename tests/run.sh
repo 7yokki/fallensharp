@@ -86,4 +86,9 @@ fi
 grep -q "double free" "$TMP/own_df.err" || { echo "own_double_free FAIL: yanlış tanı"; cat "$TMP/own_df.err"; exit 1; }
 echo "ok own_double_free"
 
+$F build tests/fpp/args8.fpp -o "$TMP/args8" >/dev/null
+out=$("$TMP/args8")
+[ "$out" = "nested ok" ] || { echo "args8 FAIL: $out"; exit 1; }
+echo "ok args8"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

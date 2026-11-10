@@ -494,18 +494,35 @@ impl<'a> Codegen<'a> {
             reg_idx += 1;
         }
         for p in &f.params {
-            if reg_idx >= 6 {
-                return Err(format!(
-                    "satır {}: 6'dan fazla parametre henüz desteklenmiyor",
-                    p.line
-                ));
-            }
             let off = p.offset.ok_or_else(|| {
                 format!("iç hata: '{}' parametresi için yuva yok", p.name)
             })?;
             let ty = &p.ty;
-            self.emitf(format_args!("  lea {}(%rbp), %rax", off));
-            self.store_at_reg("%rax", reg_idx, ty);
+            if reg_idx < 6 {
+                self.emitf(format_args!("  lea {}(%rbp), %rax", off));
+                self.store_at_reg("%rax", reg_idx, ty);
+            } else {
+                let src_off = 16 + (reg_idx - 6) * 8;
+                self.emitf(format_args!("  lea {}(%rbp), %rax", off));
+                match self.size(ty) {
+                    1 => {
+                        self.emitf(format_args!("  movb {}(%rbp), %cl", src_off));
+                        self.emit("  movb %cl, (%rax)");
+                    }
+                    2 => {
+                        self.emitf(format_args!("  movw {}(%rbp), %cx", src_off));
+                        self.emit("  movw %cx, (%rax)");
+                    }
+                    4 => {
+                        self.emitf(format_args!("  movl {}(%rbp), %ecx", src_off));
+                        self.emit("  movl %ecx, (%rax)");
+                    }
+                    _ => {
+                        self.emitf(format_args!("  movq {}(%rbp), %rcx", src_off));
+                        self.emit("  movq %rcx, (%rax)");
+                    }
+                }
+            }
             reg_idx += 1;
         }
 
@@ -1148,32 +1165,65 @@ impl<'a> Codegen<'a> {
             }
         }
 
-        let mut count = 0usize;
-        if let ExprKind::Member { base, .. } = &callee.kind {
-            let bt = base.ty.clone().unwrap_or(Type::Int);
-            if bt.is_pointer() {
-                self.gen_expr(base)?;
-            } else {
-                self.gen_addr(base)?;
-            }
-            self.push();
-            count += 1;
-        }
-        for a in args {
-            self.gen_expr(a)?;
-            self.push();
-            count += 1;
-        }
+        let method_base = if let ExprKind::Member { base, .. } = &callee.kind {
+            Some(base.as_ref())
+        } else {
+            None
+        };
+        let count = args.len() + method_base.is_some() as usize;
+
         if count > 6 {
-            return Err("6'dan fazla argüman henüz desteklenmiyor".into());
+            let extras = count - 6;
+            let pad = (self.cur.depth as usize + extras) % 2;
+            if pad == 1 {
+                self.emit("  sub $8, %rsp");
+                self.cur.depth += 1;
+            }
+            for a in args.iter().rev() {
+                self.gen_expr(a)?;
+                self.push();
+            }
+            if let Some(base) = method_base {
+                let bt = base.ty.clone().unwrap_or(Type::Int);
+                if bt.is_pointer() {
+                    self.gen_expr(base)?;
+                } else {
+                    self.gen_addr(base)?;
+                }
+                self.push();
+            }
+            for i in 0..6 {
+                self.pop_to(PARAM_REGS[i]);
+            }
+            self.emit("  xor %eax, %eax");
+            self.emitf(format_args!("  call {}", label));
+            let cleanup = (extras + pad) * 8;
+            if cleanup > 0 {
+                self.emitf(format_args!("  add ${}, %rsp", cleanup));
+                self.cur.depth -= (extras + pad) as i32;
+            }
+        } else {
+            if let Some(base) = method_base {
+                let bt = base.ty.clone().unwrap_or(Type::Int);
+                if bt.is_pointer() {
+                    self.gen_expr(base)?;
+                } else {
+                    self.gen_addr(base)?;
+                }
+                self.push();
+            }
+            for a in args {
+                self.gen_expr(a)?;
+                self.push();
+            }
+            for i in (0..count).rev() {
+                self.pop_to(PARAM_REGS[i]);
+            }
+            let padded = self.align_call();
+            self.emit("  xor %eax, %eax");
+            self.emitf(format_args!("  call {}", label));
+            self.unalign_call(padded);
         }
-        for i in (0..count).rev() {
-            self.pop_to(PARAM_REGS[i]);
-        }
-        let padded = self.align_call();
-        self.emit("  xor %eax, %eax");
-        self.emitf(format_args!("  call {}", label));
-        self.unalign_call(padded);
         match (self.size(ret_ty), ret_ty.is_signed()) {
             (1, true) => self.emit("  movsbq %al, %rax"),
             (1, false) => self.emit("  movzbq %al, %rax"),

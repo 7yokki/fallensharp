@@ -73,6 +73,7 @@ Kurallar:
   erişimi dizinin bilinen uzunluğuna göre sınır kontrolünden geçer.
 - `own` belleğinde `alloc`/`free` sahiplik denetimi: use-after-free, double-free
   ve sahipsiz `free` derleme zamanında reddedilir.
+- SysV x86-64 ABI: 6'dan fazla argüman stack üzerinden aktarılır.
 - Doğrudan SysV x86-64 kod üretimi ve libc bağlantısı.
 
 ## Bellek modelleri
@@ -88,7 +89,7 @@ ortamlarında `stack` varsayılanı kullanılır.
 
 ## Yol haritası
 
-- `float`/`double` (SSE), 6+ argüman, aggregate dönüş/parametre.
+- `float`/`double` (SSE), aggregate dönüş/parametre.
 - Çalışma zamanı uzunluk taşıyan tam fat pointer (fonksiyon geçişlerinde koruma).
 - Borrow checker, otomatik `drop`, kapsam sonu temizlik.
 - Kalıtım, sanal metotlar, destructor, fonksiyon pointer'ları.
