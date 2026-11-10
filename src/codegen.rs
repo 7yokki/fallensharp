@@ -6,6 +6,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 const PARAM_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+const XMM_PARAM_REGS: [&str; 8] = [
+    "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+];
 
 struct FuncState {
     depth: i32,
@@ -18,6 +21,7 @@ struct FuncState {
 enum ConstInit {
     None,
     Int(i64),
+    F64(u64),
     Bytes(Vec<u8>),
 }
 
@@ -32,9 +36,11 @@ struct GlobalDef {
 fn const_init(e: &Expr) -> ConstInit {
     match &e.kind {
         ExprKind::Int(v) => ConstInit::Int(*v),
+        ExprKind::F64(v) => ConstInit::F64(v.to_bits()),
         ExprKind::Str(b) => ConstInit::Bytes(b.clone()),
         ExprKind::Un(UnOp::Neg, inner) => match const_init(inner) {
             ConstInit::Int(v) => ConstInit::Int(-v),
+            ConstInit::F64(bits) => ConstInit::F64(bits ^ (1u64 << 63)),
             _ => ConstInit::None,
         },
         _ => ConstInit::None,
@@ -321,6 +327,20 @@ impl<'a> Codegen<'a> {
             self.emit("  pop %rbp");
             self.emit("  ret");
         }
+        if self.helpers.contains("fpp_print_double") {
+            self.emit("__fallen_print_double:");
+            self.emit("  push %rbp");
+            self.emit("  mov %rsp, %rbp");
+            self.emit("  lea .Lfpp_fmt_double(%rip), %rdi");
+            self.emit("  mov $1, %eax");
+            self.emit("  call printf");
+            self.emit("  leave");
+            self.emit("  ret");
+            self.emit(".pushsection .rodata");
+            self.emit(".Lfpp_fmt_double:");
+            self.emit("  .byte 37,102,10,0");
+            self.emit(".popsection");
+        }
         if self.helpers.contains("fpp_readline") || self.helpers.contains("fpp_exec") {
             self.emit(".pushsection .rodata");
             self.emit(".Lfpp_newline:");
@@ -357,6 +377,7 @@ impl<'a> Codegen<'a> {
                         4 => self.emitf(format_args!("  .long {}", *v as i32)),
                         _ => self.emitf(format_args!("  .quad {}", v)),
                     },
+                    ConstInit::F64(bits) => self.emitf(format_args!("  .quad {}", *bits)),
                     ConstInit::Bytes(bytes) => {
                         if matches!(g.ty, Type::Array(_, _)) {
                             let take = bytes.len().min(g.size);
@@ -484,25 +505,36 @@ impl<'a> Codegen<'a> {
         }
         self.emit("  xor %eax, %eax");
 
-        let mut reg_idx = 0usize;
+        let mut int_idx = 0usize;
+        let mut xmm_idx = 0usize;
         if f.is_method {
             let this_off = f.this_offset.ok_or_else(|| {
                 format!("iç hata: {} metodu için this yuvası yok", label)
             })?;
             self.emitf(format_args!("  lea {}(%rbp), %rax", this_off));
-            self.emitf(format_args!("  mov {}, (%rax)", PARAM_REGS[reg_idx]));
-            reg_idx += 1;
+            self.emitf(format_args!("  mov {}, (%rax)", PARAM_REGS[int_idx]));
+            int_idx += 1;
         }
         for p in &f.params {
             let off = p.offset.ok_or_else(|| {
                 format!("iç hata: '{}' parametresi için yuva yok", p.name)
             })?;
             let ty = &p.ty;
-            if reg_idx < 6 {
+            if ty.is_float() {
+                let src = XMM_PARAM_REGS.get(xmm_idx).copied().ok_or_else(|| {
+                    format!("satır {}: 8'den fazla ondalık parametre desteklenmiyor", p.line)
+                })?;
+                self.emitf(format_args!("  movq {}, %rax", src));
+                self.emitf(format_args!("  lea {}(%rbp), %rcx", off));
+                self.store_at("%rcx", ty);
+                xmm_idx += 1;
+                continue;
+            }
+            if int_idx < 6 {
                 self.emitf(format_args!("  lea {}(%rbp), %rax", off));
-                self.store_at_reg("%rax", reg_idx, ty);
+                self.store_at_reg("%rax", int_idx, ty);
             } else {
-                let src_off = 16 + (reg_idx - 6) * 8;
+                let src_off = 16 + (int_idx - 6) * 8;
                 self.emitf(format_args!("  lea {}(%rbp), %rax", off));
                 match self.size(ty) {
                     1 => {
@@ -523,7 +555,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
             }
-            reg_idx += 1;
+            int_idx += 1;
         }
 
         self.gen_stmt(&f.body)?;
@@ -877,6 +909,9 @@ impl<'a> Codegen<'a> {
                     self.emitf(format_args!("  movabs ${}, %rax", v));
                 }
             }
+            ExprKind::F64(v) => {
+                self.emitf(format_args!("  movabs ${}, %rax", v.to_bits() as i64));
+            }
             ExprKind::Str(bytes) => {
                 let label = self.intern_string(bytes);
                 self.emitf(format_args!("  lea {}(%rip), %rax", label));
@@ -899,7 +934,12 @@ impl<'a> Codegen<'a> {
             }
             ExprKind::Un(UnOp::Neg, inner) => {
                 self.gen_expr(inner)?;
-                self.emit("  neg %rax");
+                if ty.is_float() {
+                    self.emit("  movabs $-9223372036854775808, %rcx");
+                    self.emit("  xor %rcx, %rax");
+                } else {
+                    self.emit("  neg %rax");
+                }
             }
             ExprKind::Un(UnOp::Not, inner) => {
                 self.gen_expr(inner)?;
@@ -1047,6 +1087,52 @@ impl<'a> Codegen<'a> {
     }
 
     fn apply_binop(&mut self, op: BinOp, at: &Type, bt: &Type) -> Result<(), String> {
+        if at.is_float() || bt.is_float() {
+            if at.is_float() {
+                self.emit("  movq %rax, %xmm0");
+            } else {
+                self.emit("  cvtsi2sd %rax, %xmm0");
+            }
+            if bt.is_float() {
+                self.emit("  movq %rcx, %xmm1");
+            } else {
+                self.emit("  cvtsi2sd %rcx, %xmm1");
+            }
+            match op {
+                BinOp::Add => self.emit("  addsd %xmm1, %xmm0"),
+                BinOp::Sub => self.emit("  subsd %xmm1, %xmm0"),
+                BinOp::Mul => self.emit("  mulsd %xmm1, %xmm0"),
+                BinOp::Div => self.emit("  divsd %xmm1, %xmm0"),
+                BinOp::Mod => {
+                    return Err("ondalık sayılarda % işlemi desteklenmiyor".into());
+                }
+                BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge => {
+                    self.emit("  ucomisd %xmm1, %xmm0");
+                    let cc = match op {
+                        BinOp::Eq => "sete",
+                        BinOp::Ne => "setne",
+                        BinOp::Lt => "setb",
+                        BinOp::Le => "setbe",
+                        BinOp::Gt => "seta",
+                        BinOp::Ge => "setae",
+                        _ => unreachable!(),
+                    };
+                    self.emitf(format_args!("  {} %al", cc));
+                    self.emit("  movzbq %al, %rax");
+                    return Ok(());
+                }
+                _ => {
+                    return Err("ondalık sayılarda bit düzeyi işlemler desteklenmiyor".into());
+                }
+            }
+            self.emit("  movq %xmm0, %rax");
+            return Ok(());
+        }
         match op {
             BinOp::Add => {
                 if at.is_pointer() && bt.is_integer() {
@@ -1162,6 +1248,8 @@ impl<'a> Codegen<'a> {
                 self.helpers.insert("fpp_readline".into());
             } else if n == "__fallen_exec" {
                 self.helpers.insert("fpp_exec".into());
+            } else if n == "__fallen_print_double" {
+                self.helpers.insert("fpp_print_double".into());
             }
         }
 
@@ -1171,6 +1259,16 @@ impl<'a> Codegen<'a> {
             None
         };
         let count = args.len() + method_base.is_some() as usize;
+        let mut arg_float = Vec::with_capacity(count);
+        if method_base.is_some() {
+            arg_float.push(false);
+        }
+        for a in args {
+            arg_float.push(a.ty.as_ref().map_or(false, |t| t.is_float()));
+        }
+        if count > 6 && arg_float.iter().any(|f| *f) {
+            return Err("6'dan fazla argümanla birlikte ondalık parametre henüz desteklenmiyor".into());
+        }
 
         if count > 6 {
             let extras = count - 6;
@@ -1216,13 +1314,34 @@ impl<'a> Codegen<'a> {
                 self.gen_expr(a)?;
                 self.push();
             }
-            for i in (0..count).rev() {
-                self.pop_to(PARAM_REGS[i]);
+            let mut targets = Vec::with_capacity(count);
+            let mut int_slot = 0usize;
+            let mut xmm_slot = 0usize;
+            for is_float in &arg_float {
+                if *is_float {
+                    targets.push((true, xmm_slot));
+                    xmm_slot += 1;
+                } else {
+                    targets.push((false, int_slot));
+                    int_slot += 1;
+                }
             }
+            for i in (0..count).rev() {
+                self.pop_to("%rax");
+                let (is_float, idx) = targets[i];
+                if is_float {
+                    self.emitf(format_args!("  movq %rax, {}", XMM_PARAM_REGS[idx]));
+                } else {
+                    self.emitf(format_args!("  mov %rax, {}", PARAM_REGS[idx]));
+                }
+            }
+            self.emitf(format_args!("  mov ${}, %eax", xmm_slot));
             let padded = self.align_call();
-            self.emit("  xor %eax, %eax");
             self.emitf(format_args!("  call {}", label));
             self.unalign_call(padded);
+        }
+        if ret_ty.is_float() {
+            self.emit("  movq %xmm0, %rax");
         }
         match (self.size(ret_ty), ret_ty.is_signed()) {
             (1, true) => self.emit("  movsbq %al, %rax"),

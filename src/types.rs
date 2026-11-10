@@ -13,6 +13,7 @@ pub enum Type {
     UInt,
     Long,
     ULong,
+    Double,
     Ptr(Box<Type>),
     Array(Box<Type>, usize),
     Class(String),
@@ -50,6 +51,10 @@ impl Type {
         }
     }
 
+    pub fn is_float(&self) -> bool {
+        matches!(self, Type::Double)
+    }
+
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -78,7 +83,7 @@ impl Type {
             Type::Char | Type::SChar | Type::UChar => 1,
             Type::Short | Type::UShort => 2,
             Type::Int | Type::UInt => 4,
-            Type::Long | Type::ULong | Type::Ptr(_) => 8,
+            Type::Long | Type::ULong | Type::Double | Type::Ptr(_) => 8,
             Type::Array(elem, _) => elem.align(classes),
             Type::Class(name) => classes
                 .get(name)
@@ -93,7 +98,7 @@ impl Type {
             Type::Char | Type::SChar | Type::UChar => 1,
             Type::Short | Type::UShort => 2,
             Type::Int | Type::UInt => 4,
-            Type::Long | Type::ULong | Type::Ptr(_) => 8,
+            Type::Long | Type::ULong | Type::Double | Type::Ptr(_) => 8,
             Type::Array(elem, n) => elem.size(classes) * n,
             Type::Class(name) => classes.get(name).map(|c| c.size).unwrap_or(1),
         }

@@ -91,4 +91,9 @@ out=$("$TMP/args8")
 [ "$out" = "nested ok" ] || { echo "args8 FAIL: $out"; exit 1; }
 echo "ok args8"
 
+$F build tests/fpp/floats.fpp -o "$TMP/floats" >/dev/null
+out=$("$TMP/floats")
+[ "$out" = $'6.500000\n5.500000\ncmp ok\n6.5' ] || { echo "floats FAIL: $out"; exit 1; }
+echo "ok floats"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

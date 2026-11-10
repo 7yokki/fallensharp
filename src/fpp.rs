@@ -8,6 +8,7 @@ use crate::types::Type;
 enum Tk {
     Ident(String),
     Int(i64),
+    Float(f64),
     Str(Vec<u8>),
     Char(i64),
     Punct(String),
@@ -132,12 +133,8 @@ impl<'a> Lexer<'a> {
                 c if c.is_ascii_digit() => {
                     let line = self.line;
                     let col = self.col;
-                    let v = self.lex_number()?;
-                    out.push(Token {
-                        kind: Tk::Int(v),
-                        line,
-                        col,
-                    });
+                    let kind = self.lex_number()?;
+                    out.push(Token { kind, line, col });
                 }
                 b';' => {
                     let line = self.line;
@@ -169,7 +166,7 @@ impl<'a> Lexer<'a> {
         Ok(out)
     }
 
-    fn lex_number(&mut self) -> Result<i64, String> {
+    fn lex_number(&mut self) -> Result<Tk, String> {
         let start = self.pos;
         if self.peek() == Some(b'0') {
             match self.peek_at(1) {
@@ -188,6 +185,7 @@ impl<'a> Lexer<'a> {
                         .unwrap_or("")
                         .replace('_', "");
                     return i64::from_str_radix(&text, 16)
+                        .map(Tk::Int)
                         .map_err(|_| format!("satır {}: geçersiz onaltılık sayı", self.line));
                 }
                 Some(b'b') | Some(b'B') => {
@@ -205,6 +203,7 @@ impl<'a> Lexer<'a> {
                         .unwrap_or("")
                         .replace('_', "");
                     return i64::from_str_radix(&text, 2)
+                        .map(Tk::Int)
                         .map_err(|_| format!("satır {}: geçersiz ikilik sayı", self.line));
                 }
                 Some(b'o') | Some(b'O') => {
@@ -222,9 +221,43 @@ impl<'a> Lexer<'a> {
                         .unwrap_or("")
                         .replace('_', "");
                     return i64::from_str_radix(&text, 8)
+                        .map(Tk::Int)
                         .map_err(|_| format!("satır {}: geçersiz sekizlik sayı", self.line));
                 }
                 _ => {}
+            }
+        }
+        let mut is_float = false;
+        while let Some(c) = self.peek() {
+            if c.is_ascii_digit() || c == b'_' {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        if self.peek() == Some(b'.') && self.peek_at(1).map_or(false, |c| c.is_ascii_digit()) {
+            is_float = true;
+            self.bump();
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() || c == b'_' {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        if matches!(self.peek(), Some(b'e') | Some(b'E')) {
+            is_float = true;
+            self.bump();
+            if matches!(self.peek(), Some(b'+') | Some(b'-')) {
+                self.bump();
+            }
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() {
+                    self.bump();
+                } else {
+                    break;
+                }
             }
         }
         while let Some(c) = self.peek() {
@@ -237,10 +270,19 @@ impl<'a> Lexer<'a> {
         let text: String = std::str::from_utf8(&self.src[start..self.pos])
             .unwrap_or("")
             .replace('_', "");
-        let trimmed = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
-        trimmed
-            .parse::<i64>()
-            .map_err(|_| format!("satır {}: geçersiz sayı '{}'", self.line, text))
+        if is_float {
+            let trimmed = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+            trimmed
+                .parse::<f64>()
+                .map(Tk::Float)
+                .map_err(|_| format!("satır {}: geçersiz ondalık sayı '{}'", self.line, text))
+        } else {
+            let trimmed = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+            trimmed
+                .parse::<i64>()
+                .map(Tk::Int)
+                .map_err(|_| format!("satır {}: geçersiz sayı '{}'", self.line, text))
+        }
     }
 
     fn lex_escape(&mut self) -> Result<Vec<u8>, String> {
@@ -862,7 +904,8 @@ impl Parser {
         let name = self.expect_name()?;
         let base = match name.as_str() {
             "void" => Type::Void,
-            "int" | "bool" | "float" | "double" => Type::Int,
+            "int" | "bool" => Type::Int,
+            "float" | "double" => Type::Double,
             "uint" => Type::UInt,
             "long" => Type::Long,
             "ulong" => Type::ULong,
@@ -1201,6 +1244,7 @@ impl Parser {
             Some("stdin") => "__fallen_readline".to_string(),
             Some("alloc") => "malloc".to_string(),
             Some("free") => "free".to_string(),
+            Some("print_double") | Some("println_double") => "__fallen_print_double".to_string(),
             Some("system.exec") => "__fallen_exec".to_string(),
             Some(n) if n.starts_with("fncall.") => n["fncall.".len()..].to_string(),
             Some(n) if n.contains('.') => n.replace('.', "_"),
@@ -1244,6 +1288,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::new(ExprKind::Int(v), line))
             }
+            Tk::Float(v) => {
+                self.advance();
+                Ok(Expr::new(ExprKind::F64(v), line))
+            }
             Tk::Str(b) => {
                 self.advance();
                 Ok(Expr::new(ExprKind::Str(b), line))
@@ -1275,6 +1323,7 @@ impl Parser {
 
 fn infer_type(init: Option<&Expr>) -> Type {
     match init.map(|e| &e.kind) {
+        Some(ExprKind::F64(_)) => Type::Double,
         Some(ExprKind::Str(_)) => Type::ptr(Type::Char),
         Some(ExprKind::Call(callee, _)) => match &callee.kind {
             ExprKind::Ident(n)

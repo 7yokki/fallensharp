@@ -66,6 +66,10 @@ Kurallar:
 - `import`, `fn`, `class` (alan düzeyinde), parametreler, dönüş değerleri.
 - `int`, `uint`, `long`, `ulong`, `short`, `ushort`, `char`, `uchar`, `bool`,
   `string`, `void`, sabit boyutlu diziler.
+- `float`/`double` (ikisi de SSE `double` olarak): aritmetik, karşılaştırma,
+  fonksiyon parametresi/dönüşü ve `printf` değişken argümanları.
+  - Ondalık yazım zorunludur: `x double => 2.0` (tam sayıdan örtük dönüşüm yok).
+  - `print_double(x)` yardımcısı `%f` biçiminde yazdırır.
 - `if` / `else`, `loop` / `do`, `while`, `break`, `continue`, `return`.
 - Aritmetik, karşılaştırma, mantıksal, bit düzeyi ve atama operatörleri.
 - Dizi sınır kontrolü, otomatik sıfır başlatma.
@@ -89,7 +93,7 @@ ortamlarında `stack` varsayılanı kullanılır.
 
 ## Yol haritası
 
-- `float`/`double` (SSE), aggregate dönüş/parametre.
+- Aggregate dönüş/parametre, ondalık sayılarla 6+ argüman.
 - Çalışma zamanı uzunluk taşıyan tam fat pointer (fonksiyon geçişlerinde koruma).
 - Borrow checker, otomatik `drop`, kapsam sonu temizlik.
 - Kalıtım, sanal metotlar, destructor, fonksiyon pointer'ları.
@@ -103,8 +107,8 @@ ortamlarında `stack` varsayılanı kullanılır.
 ```
 
 Testler; temel çıktı, fonksiyon çağrıları, `fncall`, girintisiz `end`
-kullanımı, `stdin`/`stdout`, `system.exec` çıktı yakalama ve döngü/shell
-akışını doğrular.
+kullanımı, `stdin`/`stdout`, `system.exec` çıktı yakalama, döngü/shell akışı,
+6+ argüman, `double`/SSE aritmetiği ve bellek güvenliği kontrollerini doğrular.
 
 ## Lisans
 

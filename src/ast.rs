@@ -10,6 +10,7 @@ pub enum Place {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Int(i64),
+    F64(f64),
     Str(Vec<u8>),
     Ident(String),
     This,

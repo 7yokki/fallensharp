@@ -233,6 +233,7 @@ impl Sema {
         add("__fallen_stderr", void.clone(), vec![cptr.clone()], false);
         add("__fallen_readline", cptr.clone(), vec![cptr.clone()], false);
         add("__fallen_exec", cptr.clone(), vec![cptr.clone(), int.clone()], false);
+        add("__fallen_print_double", void.clone(), vec![Type::Double], false);
 
         Sema {
             classes: HashMap::new(),
@@ -806,6 +807,10 @@ impl Sema {
                 e.ty = Some(Type::Int);
                 Ok(())
             }
+            ExprKind::F64(_) => {
+                e.ty = Some(Type::Double);
+                Ok(())
+            }
             ExprKind::Str(b) => {
                 let n = b.len() + 1;
                 e.ty = Some(Type::Array(Box::new(Type::Char), n));
@@ -824,6 +829,9 @@ impl Sema {
         match &mut e.kind {
             ExprKind::Int(_) => {
                 e.ty = Some(Type::Int);
+            }
+            ExprKind::F64(_) => {
+                e.ty = Some(Type::Double);
             }
             ExprKind::Str(b) => {
                 let n = b.len() + 1;
@@ -869,6 +877,22 @@ impl Sema {
                 self.analyze_expr(b, ctx)?;
                 let ta = a.ty.clone().unwrap_or(Type::Int);
                 let tb = b.ty.clone().unwrap_or(Type::Int);
+                if (ta.is_float() || tb.is_float())
+                    && matches!(
+                        op,
+                        BinOp::Mod
+                            | BinOp::BitAnd
+                            | BinOp::BitOr
+                            | BinOp::BitXor
+                            | BinOp::Shl
+                            | BinOp::Shr
+                    )
+                {
+                    return Err(format!(
+                        "satır {}: bu işlem ondalık sayılarda desteklenmiyor",
+                        e.line
+                    ));
+                }
                 let ty = match op {
                     BinOp::LogAnd
                     | BinOp::LogOr
@@ -879,7 +903,9 @@ impl Sema {
                     | BinOp::Gt
                     | BinOp::Ge => Type::Int,
                     BinOp::Add => {
-                        if ta.is_pointer() {
+                        if ta.is_float() || tb.is_float() {
+                            Type::Double
+                        } else if ta.is_pointer() {
                             ta
                         } else if tb.is_pointer() {
                             tb
@@ -888,7 +914,9 @@ impl Sema {
                         }
                     }
                     BinOp::Sub => {
-                        if ta.is_pointer() && tb.is_pointer() {
+                        if ta.is_float() || tb.is_float() {
+                            Type::Double
+                        } else if ta.is_pointer() && tb.is_pointer() {
                             Type::Long
                         } else if ta.is_pointer() {
                             ta
@@ -919,7 +947,22 @@ impl Sema {
                         e.bound = bound;
                     }
                     UnOp::Not => e.ty = Some(Type::Int),
-                    UnOp::Neg | UnOp::BitNot => e.ty = Some(usual_arith(&ta, &ta)),
+                    UnOp::Neg => {
+                        e.ty = Some(if ta.is_float() {
+                            Type::Double
+                        } else {
+                            usual_arith(&ta, &ta)
+                        });
+                    }
+                    UnOp::BitNot => {
+                        if ta.is_float() {
+                            return Err(format!(
+                                "satır {}: bit düzeyi işlemler ondalık sayılarda kullanılamaz",
+                                e.line
+                            ));
+                        }
+                        e.ty = Some(usual_arith(&ta, &ta));
+                    }
                 }
             }
             ExprKind::Assign(l, r) => {
@@ -974,6 +1017,12 @@ impl Sema {
                 self.analyze_expr(target, ctx)?;
                 if !is_lvalue(target) {
                     return Err(format!("satır {}: ++/-- lvalue gerektirir", e.line));
+                }
+                if target.ty.as_ref().map_or(false, |t| t.is_float()) {
+                    return Err(format!(
+                        "satır {}: ondalık sayılarda ++/-- henüz desteklenmiyor",
+                        e.line
+                    ));
                 }
                 e.ty = target.ty.clone();
             }
@@ -1232,6 +1281,9 @@ fn class_of(ty: &Type) -> Option<String> {
 }
 
 fn usual_arith(a: &Type, b: &Type) -> Type {
+    if a.is_float() || b.is_float() {
+        return Type::Double;
+    }
     if a.is_pointer() {
         return a.clone();
     }
@@ -1254,6 +1306,9 @@ fn check_assignable(dst: &Type, src: &Type) -> Result<(), String> {
         return Ok(());
     }
     if dst.is_integer() && src.is_integer() {
+        return Ok(());
+    }
+    if dst.is_float() && src.is_float() {
         return Ok(());
     }
     if dst.is_pointer() && src.is_pointer() {
