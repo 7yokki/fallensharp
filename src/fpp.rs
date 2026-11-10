@@ -538,6 +538,10 @@ impl Parser {
     }
 
     fn parse_fn(&mut self) -> PResult<FuncDecl> {
+        self.parse_fn_common(false)
+    }
+
+    fn parse_fn_common(&mut self, is_method: bool) -> PResult<FuncDecl> {
         let line = self.line();
         self.expect_ident("fn")?;
         let name = self.expect_name()?;
@@ -596,7 +600,7 @@ impl Parser {
                 self.eat_punct(";");
             }
         }
-        if name == "main" && !has_ret_annot {
+        if name == "main" && !has_ret_annot && !is_method {
             ret = Type::Int;
             body.push(Stmt::Return(Some(Expr::new(ExprKind::Int(0), line))));
         }
@@ -621,56 +625,63 @@ impl Parser {
         self.expect_ident("class")?;
         let name = self.expect_name()?;
         self.expect_punct(":")?;
-        let header_col = self.col();
         self.skip_newlines();
-        let (body, _end) = self.parse_block(header_col, &["end"])?;
+        let body_col = self.col();
         let mut fields = Vec::new();
         let mut methods = Vec::new();
-        let mut is_private = true;
-        for st in body {
-            match st {
-                Stmt::Var(v) => fields.push(FieldDecl {
-                    name: v.name,
-                    ty: v.ty,
-                    is_private,
-                    line: v.line,
-                }),
-                Stmt::Expr(e) => {
-                    if let ExprKind::Ident(s) = &e.kind {
-                        match s.as_str() {
-                            "private" => is_private = true,
-                            "public" => is_private = false,
-                            _ => {
-                                return Err(format!(
-                                    "Fallen++ satır {}: sınıf gövdesinde geçersiz öğe '{}'",
-                                    e.line, s
-                                ))
-                            }
-                        }
-                    }
-                }
-                Stmt::Group(items) => {
-                    for it in items {
-                        if let Stmt::Var(v) = it {
-                            fields.push(FieldDecl {
-                                name: v.name,
-                                ty: v.ty,
-                                is_private,
-                                line: v.line,
-                            });
-                        }
-                    }
-                }
-                _ => {
-                    return Err(format!(
-                        "Fallen++ satır {}: sınıf gövdesinde yalnızca alanlar ve erişim etiketleri destekleniyor",
-                        line
-                    ))
-                }
+        let mut is_private = false;
+        loop {
+            self.skip_newlines();
+            if self.at_eof() {
+                break;
             }
+            if self.is_ident("end") {
+                self.advance();
+                self.eat_punct(";");
+                break;
+            }
+            if self.col() < body_col {
+                break;
+            }
+            if self.is_ident("private") || self.is_ident("public") {
+                is_private = self.is_ident("private");
+                self.advance();
+                self.eat_punct(":");
+                while !matches!(self.peek(), Tk::Newline | Tk::Eof) {
+                    self.advance();
+                }
+                continue;
+            }
+            if self.is_ident("fn") {
+                let mut m = self.parse_fn_common(true)?;
+                m.owner = Some(name.clone());
+                m.is_method = true;
+                m.is_private = is_private;
+                m.is_ctor = m.name == name || m.name == "new" || m.name == "init";
+                methods.push(m);
+                continue;
+            }
+            if self.looks_like_binding() {
+                match self.parse_binding()? {
+                    Stmt::Var(v) => fields.push(FieldDecl {
+                        name: v.name,
+                        ty: v.ty,
+                        is_private,
+                        line: v.line,
+                    }),
+                    _ => {
+                        return Err(format!(
+                            "Fallen++ satır {}: sınıf gövdesinde geçersiz alan",
+                            self.line()
+                        ))
+                    }
+                }
+                continue;
+            }
+            return Err(self.err(
+                "sınıf gövdesinde alan, metot veya private/public bekleniyordu".into(),
+            ));
         }
-        // Metotlar ilk sürümde sınıf gövdesinde değil, ayrı fonksiyon olarak ele alınır.
-        let _ = &mut methods;
         Ok(ClassDecl {
             name,
             fields,
@@ -689,6 +700,7 @@ impl Parser {
         }
         let indented = self.col() > header_col;
         let explicit = !indented;
+        let body_col = self.col();
         let mut stmts = Vec::new();
         loop {
             self.skip_newlines();
@@ -697,6 +709,9 @@ impl Parser {
             }
             if let Some(t) = self.at_term(terms) {
                 return Ok((stmts, BlockEnd::Term(t)));
+            }
+            if self.col() < body_col {
+                return Ok((stmts, BlockEnd::Dedent));
             }
             if !explicit && self.col() <= header_col {
                 return Ok((stmts, BlockEnd::Dedent));
@@ -763,7 +778,9 @@ impl Parser {
             return true;
         }
         if let Tk::Ident(t) = self.peek_at(1) {
-            if Self::type_word(t) {
+            if Self::type_word(t)
+                || t.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+            {
                 return true;
             }
         }
@@ -779,7 +796,12 @@ impl Parser {
         } else if self.next_is_type() {
             ty = Some(self.parse_type()?);
         }
-        let init = if self.eat_punct("=>") || self.eat_punct("=") {
+        let mut ctor_args = Vec::new();
+        if ty.as_ref().map_or(false, |t| matches!(t, Type::Class(_))) && self.eat_punct("(") {
+            let (args, _kwargs) = self.parse_args()?;
+            ctor_args = args;
+        }
+        let init = if ctor_args.is_empty() && (self.eat_punct("=>") || self.eat_punct("=")) {
             Some(self.parse_expr()?)
         } else {
             None
@@ -789,7 +811,7 @@ impl Parser {
             name,
             ty,
             init,
-            ctor_args: Vec::new(),
+            ctor_args,
             offset: None,
             bound: None,
             line,
@@ -860,7 +882,10 @@ impl Parser {
 
     fn next_is_type(&self) -> bool {
         match self.peek() {
-            Tk::Ident(s) => Self::type_word(s),
+            Tk::Ident(s) => {
+                Self::type_word(s)
+                    || s.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+            }
             _ => false,
         }
     }
@@ -934,7 +959,7 @@ impl Parser {
 
     fn parse_assign(&mut self) -> PResult<Expr> {
         let left = self.parse_or()?;
-        if self.eat_punct("=") {
+        if self.eat_punct("=") || self.eat_punct("=>") {
             let line = self.line();
             let right = self.parse_assign()?;
             return Ok(Expr::new(
@@ -1230,9 +1255,9 @@ impl Parser {
         match &callee.kind {
             ExprKind::Ident(n) => name = Some(n.clone()),
             ExprKind::Member { base, field, .. } => {
+                is_member = true;
                 if let ExprKind::Ident(m) = &base.kind {
                     name = Some(format!("{}.{}", m, field));
-                    is_member = true;
                 }
             }
             _ => {}
@@ -1277,7 +1302,12 @@ impl Parser {
         for (_, v) in kwargs {
             flat.push(v);
         }
-        let callee = Expr::new(ExprKind::Ident(label), line);
+        let is_fncall = name.as_deref().map_or(false, |n| n.starts_with("fncall."));
+        let callee = if is_member && !is_fncall {
+            callee
+        } else {
+            Expr::new(ExprKind::Ident(label), line)
+        };
         Expr::new(ExprKind::Call(Box::new(callee), flat), line)
     }
 
@@ -1307,6 +1337,7 @@ impl Parser {
                     "false" | "False" | "null" | "nil" | "None" => {
                         Ok(Expr::new(ExprKind::Int(0), line))
                     }
+                    "this" | "self" => Ok(Expr::new(ExprKind::This, line)),
                     _ => Ok(Expr::new(ExprKind::Ident(s), line)),
                 }
             }

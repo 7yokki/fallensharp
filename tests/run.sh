@@ -96,4 +96,15 @@ out=$("$TMP/floats")
 [ "$out" = $'6.500000\n5.500000\ncmp ok\n6.5' ] || { echo "floats FAIL: $out"; exit 1; }
 echo "ok floats"
 
+$F build tests/fpp/oop.fpp -o "$TMP/oop" >/dev/null
+out=$("$TMP/oop")
+[ "$out" = $'p=7\np2=17\nc=12' ] || { echo "oop FAIL: $out"; exit 1; }
+echo "ok oop"
+
+if $F build tests/fpp/oop_private.fpp -o "$TMP/oop_private" >/dev/null 2>"$TMP/oop_private.err"; then
+    echo "oop_private FAIL: beklenmedik şekilde derlendi"; exit 1
+fi
+grep -q "özel" "$TMP/oop_private.err" || { echo "oop_private FAIL: yanlış tanı"; cat "$TMP/oop_private.err"; exit 1; }
+echo "ok oop_private"
+
 echo "TÜM FALLEN++ TESTLERİ GEÇTİ"

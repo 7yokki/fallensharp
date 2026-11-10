@@ -1030,7 +1030,7 @@ impl Sema {
                 let (sig, display): (Option<FuncSig>, String) = if let ExprKind::Member {
                     base,
                     field,
-                    arrow,
+                    arrow: _,
                 } = &mut callee.kind
                 {
                     self.analyze_expr(base, ctx)?;
@@ -1038,18 +1038,6 @@ impl Sema {
                     let cname = class_of(&base_ty).ok_or_else(|| {
                         format!("satır {}: metot çağrısı için sınıf/pointer gerekli", e.line)
                     })?;
-                    if base_ty.is_pointer() && !*arrow {
-                        return Err(format!(
-                            "satır {}: pointer üzerinde '.' kullanılamaz, '->' kullanın",
-                            e.line
-                        ));
-                    }
-                    if matches!(base_ty, Type::Class(_)) && *arrow {
-                        return Err(format!(
-                            "satır {}: değer üzerinde '->' kullanılamaz, '.' kullanın",
-                            e.line
-                        ));
-                    }
                     let info = self
                         .classes
                         .get(&cname)
@@ -1180,24 +1168,12 @@ impl Sema {
                 }
                 e.ty = Some(elem);
             }
-            ExprKind::Member { base, field, arrow } => {
+            ExprKind::Member { base, field, arrow: _ } => {
                 self.analyze_expr(base, ctx)?;
                 let bt = base.ty.clone().unwrap_or(Type::Int);
                 let cname = class_of(&bt).ok_or_else(|| {
                     format!("satır {}: alan erişimi için sınıf gerekli", e.line)
                 })?;
-                if matches!(bt, Type::Class(_)) && *arrow {
-                    return Err(format!(
-                        "satır {}: değer üzerinde '->' kullanılamaz, '.' kullanın",
-                        e.line
-                    ));
-                }
-                if bt.is_pointer() && !*arrow {
-                    return Err(format!(
-                        "satır {}: pointer üzerinde '.' kullanılamaz, '->' kullanın",
-                        e.line
-                    ));
-                }
                 let info = self
                     .classes
                     .get(&cname)

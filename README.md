@@ -63,7 +63,11 @@ Kurallar:
 
 ## Şu an desteklenenler
 
-- `import`, `fn`, `class` (alan düzeyinde), parametreler, dönüş değerleri.
+- `import`, `fn`, `class`, parametreler, dönüş değerleri.
+- Sınıflar: alanlar, metotlar, yapıcılar (`fn Sinif(...)`, `fn new(...)` veya
+  `fn init(...)`), `this`/`self`, `private`/`public`, nesne bağlama
+  (`p Point(3, 4)`) ve metot çağrıları (`p.sum()`). İndentasyon veya `end`
+  tabanlı sınıf/metot gövdeleri desteklenir.
 - `int`, `uint`, `long`, `ulong`, `short`, `ushort`, `char`, `uchar`, `bool`,
   `string`, `void`, sabit boyutlu diziler.
 - `float`/`double` (ikisi de SSE `double` olarak): aritmetik, karşılaştırma,
@@ -94,9 +98,9 @@ ortamlarında `stack` varsayılanı kullanılır.
 ## Yol haritası
 
 - Aggregate dönüş/parametre, ondalık sayılarla 6+ argüman.
+- Kalıtım, sanal metotlar, destructor ve fonksiyon pointer'ları.
 - Çalışma zamanı uzunluk taşıyan tam fat pointer (fonksiyon geçişlerinde koruma).
 - Borrow checker, otomatik `drop`, kapsam sonu temizlik.
-- Kalıtım, sanal metotlar, destructor, fonksiyon pointer'ları.
 - Gerçek modül sistemi ve standart kütüphane.
 - Satır/kolon bazlı tanılamalar, AST/IR çıktıları, fuzz ve golden testler.
 
@@ -108,7 +112,8 @@ ortamlarında `stack` varsayılanı kullanılır.
 
 Testler; temel çıktı, fonksiyon çağrıları, `fncall`, girintisiz `end`
 kullanımı, `stdin`/`stdout`, `system.exec` çıktı yakalama, döngü/shell akışı,
-6+ argüman, `double`/SSE aritmetiği ve bellek güvenliği kontrollerini doğrular.
+6+ argüman, `double`/SSE aritmetiği, sınıf/metot/yapıcı kullanımı ve bellek
+güvenliği kontrollerini doğrular.
 
 ## Lisans
 
